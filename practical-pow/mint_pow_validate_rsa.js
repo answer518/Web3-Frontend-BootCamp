@@ -1,4 +1,34 @@
 const crypto = require('crypto');
+
+function generateRSAKeyPair() {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+        publicKeyEncoding: {
+            type: 'spki',
+            format: 'pem'
+        },
+        privateKeyEncoding: {
+            type: 'pkcs8',
+            format: 'pem'
+        }
+    });
+    return { publicKey, privateKey };
+}
+
+function sign(data, privateKey) {
+    const sign = crypto.createSign('SHA256');
+    sign.update(data);
+    sign.end();
+    const signature = sign.sign(privateKey, 'hex');
+    return signature;
+}
+
+function verify(data, signature, publicKey) {
+    const verify = crypto.createVerify('SHA256');
+    verify.update(data);
+    verify.end();
+    return verify.verify(publicKey, signature, 'hex');
+}
 /**
  * 使用 SHA-256 挖矿，寻找满足指定前缀和零开头数量的哈希值
  * @param {string} prefix - 哈希前缀字符串
@@ -38,8 +68,13 @@ function logResult(powResult, targetZero) {
     console.log(`哈希值: ${powResult.hash}`);
 }
 
-const powResult1 = mint('果糖酱', 4);
-logResult(powResult1, 4);
+const powResult = mint('果糖酱', 4);
+logResult(powResult, 4);
 
-const powResult2 = mint('果糖酱', 5);
-logResult(powResult2, 5);
+// 生成 RSA 密钥对
+const { privateKey, publicKey } = generateRSAKeyPair();
+const signature = sign(powResult.content, privateKey);
+console.log(`签名结果：${signature}`);
+
+const isValid = verify(powResult.content, signature, publicKey);
+console.log(`验证结果：${isValid ? '成功' : '失败'}`);
