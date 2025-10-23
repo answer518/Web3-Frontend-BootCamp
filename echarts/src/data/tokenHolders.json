@@ -1,0 +1,9 @@
+{
+  "data": [
+    { "value": 1048, "name": "Whales" },
+    { "value": 735, "name": "Investors" },
+    { "value": 580, "name": "Retail" },
+    { "value": 484, "name": "Exchanges" },
+    { "value": 300, "name": "Team" }
+  ]
+}

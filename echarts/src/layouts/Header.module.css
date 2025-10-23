@@ -1,0 +1,48 @@
+.appHeader {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background-color: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border-color);
+    z-index: 1000;
+    padding: 0 2rem;
+}
+
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    height: 60px;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.logo {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.navLinks a {
+    color: var(--text-color);
+    text-decoration: none;
+    margin-left: 1.5rem;
+    font-weight: 500;
+    transition: color 0.3s ease;
+}
+
+.navLinks a:hover, .navLinks a.active {
+    color: var(--primary-color);
+}
+
+@media (max-width: 768px) {
+    .appHeader {
+        padding: 0 1rem;
+    }
+
+    .navLinks {
+        display: none;
+    }
+}

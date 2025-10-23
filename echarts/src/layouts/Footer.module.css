@@ -1,0 +1,12 @@
+.appFooter {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background-color: var(--surface-color);
+    border-top: 1px solid var(--border-color);
+    padding: 1rem 2rem;
+    text-align: center;
+    color: var(--text-secondary-color);
+    font-size: 0.9rem;
+}
