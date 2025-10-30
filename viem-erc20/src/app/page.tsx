@@ -1,7 +1,7 @@
 'use client';
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import Erc20Info from '@/components/Erc20Info';
+import TabContainer from '@/components/TabContainer';
 
 export default function Home() {
   return (
@@ -25,9 +25,9 @@ export default function Home() {
           </p>
         </div>
 
-        {/* ERC20 合约信息展示 */}
+        {/* Tab 容器 - 包含 ERC20 信息和 ETH 转账功能 */}
         <div className="mb-12">
-          <Erc20Info />
+          <TabContainer />
         </div>
         
         <div className="text-center">

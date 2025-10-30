@@ -31,7 +31,8 @@ viem-erc20/
 │   ├── components/          # UI 组件
 │   │   ├── ConnectButton.tsx  # 连接钱包按钮
 │   │   ├── EthTransfer.tsx    # ETH 转账组件
-│   │   └── Erc20Interaction.tsx # ERC20 交互组件
+│   │   ├── Erc20Info.tsx      # ERC20 信息展示组件
+│   │   └── Toast.tsx          # Toast 通知组件
 │   ├── config/
 │   │   └── wagmi.ts         # Wagmi 和 Viem 客户端配置
 │   ├── constants/
@@ -39,7 +40,8 @@ viem-erc20/
 │   ├── context/
 │   │   └── Web3Provider.tsx   # Web3 全局 Provider
 │   └── utils/
-│       └── format.ts        # 格式化工具函数
+│       ├── format.ts        # 格式化工具函数
+│       └── error.ts         # 错误处理工具函数
 ├── .gitignore
 ├── next.config.mjs
 ├── package.json
@@ -66,12 +68,21 @@ viem-erc20/
     - 使用 Viem 的 `useSendTransaction` hook 发起交易。
     - 通过 `useWaitForTransactionReceipt` hook 监听交易状态，并向用户显示交易成功或失败的反馈。
 
-- **`Erc20Interaction.tsx`**:
-  - **职责**: 封装所有与 ERC20 合约的交互逻辑。
+- **`Erc20Info.tsx`**:
+  - **职责**: 封装所有与 ERC20 合约的交互逻辑和信息展示。
   - **实现**:
     - **数据读取**: 使用 `useReadContracts` hook 并行读取合约的 `owner`, `balanceOf`, `totalSupply` 等数据。数据将实时展示在 UI 上。
     - **代币铸造 (Mint)**: 提供一个输入框让用户输入铸造数量，并设置上限（10,000）。使用 `useWriteContract` hook 调用合约的 `mint` 方法。
     - **余额刷新**: 铸造交易成功后，通过 `useWaitForTransactionReceipt` 的回调函数重新触发 `useReadContracts` 来刷新用户余额。
+    - **错误处理**: 集成统一的错误处理系统，使用 `safeExecute` 包装器处理异步操作，根据错误类型显示相应的 Toast 通知。
+
+- **`Toast.tsx`**:
+  - **职责**: 提供全局的通知系统，支持成功、警告、错误等不同类型的消息展示。
+  - **实现**:
+    - 使用 React Context 提供全局的 Toast 状态管理。
+    - 支持多种通知类型：`success`、`error`、`warning`、`info`。
+    - 自动消失机制，可配置显示时长。
+    - 支持手动关闭和批量清除功能。
 
 ## 4. 技术实现方案
 
@@ -161,6 +172,120 @@ const handleMint = () => {
 };
 
 // 使用 useEffect 监听 isSuccess 状态，成功后调用 refetch() 刷新数据
+```
+
+### 4.3 错误处理系统
+
+为了提供更好的用户体验，应用实现了完善的错误处理机制：
+
+- **错误工具函数 (`src/utils/error.ts`)**:
+
+```typescript
+// 错误类型枚举
+export enum ErrorType {
+  USER_REJECTED = 'USER_REJECTED',
+  INSUFFICIENT_FUNDS = 'INSUFFICIENT_FUNDS',
+  EXECUTION_REVERTED = 'EXECUTION_REVERTED',
+  NETWORK_ERROR = 'NETWORK_ERROR',
+  INVALID_ADDRESS = 'INVALID_ADDRESS',
+  INVALID_AMOUNT = 'INVALID_AMOUNT',
+  PERMISSION_DENIED = 'PERMISSION_DENIED',
+  CONTRACT_ERROR = 'CONTRACT_ERROR',
+  RPC_ERROR = 'RPC_ERROR',
+  UNKNOWN_ERROR = 'UNKNOWN_ERROR'
+}
+
+// 错误信息接口
+export interface ErrorInfo {
+  type: ErrorType;
+  message: string;
+  originalError?: Error;
+  suggestion?: string;
+}
+
+// 统一错误格式化函数
+export function formatError(error: unknown): ErrorInfo;
+
+// 错误类型检测函数
+export function isUserRejectedError(error: unknown): boolean;
+export function isInsufficientFundsError(error: unknown): boolean;
+export function isPermissionError(error: unknown): boolean;
+
+// 安全执行包装器
+export async function safeExecute<T>(
+  fn: () => Promise<T>,
+  onError?: (errorInfo: ErrorInfo) => void
+): Promise<T | null>;
+```
+
+- **Toast 通知系统**:
+
+```typescript
+// Toast Context 提供全局通知状态
+export interface ToastContextType {
+  showSuccess: (message: string) => void;
+  showError: (message: string) => void;
+  showWarning: (message: string) => void;
+  showInfo: (message: string) => void;
+}
+
+// 在组件中使用
+const { showSuccess, showError, showWarning } = useToast();
+
+// 错误处理示例
+await safeExecute(
+  async () => {
+    // 执行 Web3 操作
+    writeContract({ ... });
+  },
+  (errorInfo) => {
+    // 根据错误类型显示不同的通知
+    if (errorInfo.type === ErrorType.USER_REJECTED) {
+      showWarning('用户取消了交易');
+    } else if (errorInfo.type === ErrorType.INSUFFICIENT_FUNDS) {
+      showError('账户余额不足以支付 Gas 费用');
+    } else {
+      showError(errorInfo.message);
+    }
+  }
+);
+```
+
+### 4.4 ETH 转账功能
+
+- **`EthTransfer.tsx` 组件实现**:
+
+```typescript
+// 使用 useSendTransaction 发送 ETH 转账
+const { sendTransaction, isPending } = useSendTransaction();
+const { isLoading, isSuccess, isError, error } = useWaitForTransactionReceipt({ hash });
+
+// 集成错误处理的转账函数
+const handleTransfer = async () => {
+  await safeExecute(
+    async () => {
+      // 验证输入
+      if (!toAddress.trim() || !amount.trim()) {
+        throw new Error('请填写完整的转账信息');
+      }
+      
+      // 发送交易
+      sendTransaction({
+        to: toAddress as `0x${string}`,
+        value: parseEther(amount),
+      });
+    },
+    (errorInfo) => {
+      // 统一错误处理
+      setTransferError(errorInfo.message);
+      if (errorInfo.type === ErrorType.USER_REJECTED) {
+        showWarning('用户取消了交易');
+      } else {
+        showError(errorInfo.message);
+      }
+    }
+  );
+};
 ```
 
 ## 5. 开发与部署

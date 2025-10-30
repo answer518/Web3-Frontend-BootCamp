@@ -29,7 +29,7 @@ export const erc20Abi = [
     type: 'function',
     stateMutability: 'nonpayable',
     inputs: [
-      { name: 'to', type: 'address' },
+      // { name: 'to', type: 'address' },
       { name: 'amount', type: 'uint256' }
     ],
     outputs: []

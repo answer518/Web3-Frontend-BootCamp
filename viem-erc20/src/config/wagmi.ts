@@ -11,6 +11,10 @@ export const config = getDefaultConfig({
   projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || 'YOUR_PROJECT_ID',
   chains,
   transports: {
-    [sepolia.id]: http(), // 使用默认的公共 RPC
+    [sepolia.id]: http('https://ethereum-sepolia-rpc.publicnode.com', {
+      batch: true,
+      retryCount: 3,
+      retryDelay: 1000,
+    }),
   },
 });
