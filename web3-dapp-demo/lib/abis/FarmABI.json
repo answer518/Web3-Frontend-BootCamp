@@ -1,0 +1,31 @@
+[
+  {
+    "inputs": [
+      {"name": "poolId", "type": "uint256"},
+      {"name": "amount", "type": "uint256"}
+    ],
+    "name": "stake",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {"name": "poolId", "type": "uint256"},
+      {"name": "amount", "type": "uint256"}
+    ],
+    "name": "unstake",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {"name": "poolId", "type": "uint256"}
+    ],
+    "name": "harvest",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]
