@@ -1,201 +1,465 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useAccount, useReadContract } from 'wagmi'
+import { formatUnits, formatUSD } from '@/lib/utils/units'
+import { formatNumber } from '@/lib/utils/format'
+import LineChartEcharts, { transformDataForEcharts, filterDataByDays } from '@/components/charts/LineChartEcharts'
 
-// Dashboard 页面要点说明
-// 总览卡片：总余额、投资组合价值、盈亏、质押奖励
-// 资产列表：用户持有的所有代币及价值
-// 流动性仓位：已添加的流动性池及收益
-// 质押仓位：正在进行的质押及奖励
-// 交易历史：最近的交易记录
-export default function DashboardPage() {
-  // 模拟用户数据
-  const userData = {
-    totalBalance: '12,345.67',
-    totalValue: '24,691.34',
-    profitLoss: '+45.6%',
-    profitLossValue: '+$5,234.12'
+const ERC20_ABI = [
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }]
+  },
+  {
+    name: 'symbol',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'string' }]
   }
+]
 
-  // 模拟资产列表
-  const assets = [
-    { symbol: 'ETH', name: 'Ethereum', balance: '5.2345', value: '$10,469.00', change: '+3.2%', changePositive: true },
-    { symbol: 'USDT', name: 'Tether', balance: '8,500', value: '$8,500.00', change: '0.0%', changePositive: true },
-    { symbol: 'USDC', name: 'USD Coin', balance: '3,200', value: '$3,200.00', change: '0.0%', changePositive: true },
-    { symbol: 'DPX', name: 'DeFi Protocol X', balance: '1,250', value: '$2,500.00', change: '+12.5%', changePositive: true },
-  ]
+const FARM_ABI = [
+  {
+    name: 'userInfo',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [
+      { name: '', type: 'uint256' },
+      { name: '', type: 'address' }
+    ],
+    outputs: [
+      { name: 'amount', type: 'uint256' },
+      { name: 'rewardDebt', type: 'uint256' }
+    ]
+  },
+  {
+    name: 'pendingReward',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'poolId', type: 'uint256' },
+      { name: 'user', type: 'address' }
+    ],
+    outputs: [{ name: '', type: 'uint256' }]
+  }
+]
 
-  // 模拟流动性仓位
-  const liquidityPositions = [
-    { pair: 'ETH/USDT', value: '$1,234.56', share: '0.05%', earned: '$45.67' },
-    { pair: 'ETH/USDC', value: '$987.65', share: '0.03%', earned: '$23.45' },
-  ]
+export default function DashboardPage() {
+  const { address, isConnected } = useAccount()
+  const [priceData, setPriceData] = useState(null)
+  const [poolsData, setPoolsData] = useState(null)
+  const [farmData, setFarmData] = useState(null)
+  const [priceDays, setPriceDays] = useState(7) // 价格图表时间范围
+  const [apyDays, setApyDays] = useState(30)    // APY 图表时间范围
 
-  // 模拟质押仓位
-  const stakingPositions = [
-    { pool: 'ETH/USDT LP', staked: '1.23 LP', value: '$1,234.56', apr: '45.6%', earned: '12.5 REWARD' },
-    { pool: 'ETH/USDC LP', staked: '0.98 LP', value: '$987.65', apr: '32.1%', earned: '8.3 REWARD' },
-  ]
+  const swapAddress = process.env.NEXT_PUBLIC_SWAP_ADDRESS
+  const farmAddress = process.env.NEXT_PUBLIC_FARM_ADDRESS
 
-  // 模拟交易历史
-  const transactions = [
-    { type: 'Swap', description: 'Swapped 1.5 ETH for 3000 USDT', time: '2 hours ago', status: 'success' },
-    { type: 'Add Liquidity', description: 'Added ETH/USDT liquidity', time: '5 hours ago', status: 'success' },
-    { type: 'Stake', description: 'Staked 1.23 ETH/USDT LP', time: '1 day ago', status: 'success' },
-    { type: 'Harvest', description: 'Harvested 12.5 REWARD tokens', time: '2 days ago', status: 'success' },
-  ]
+  // Read token balances
+  const { data: balanceTKA } = useReadContract({
+    address: process.env.NEXT_PUBLIC_TOKEN_A_ADDRESS,
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    enabled: Boolean(address)
+  })
+
+  const { data: balanceTKB } = useReadContract({
+    address: process.env.NEXT_PUBLIC_TOKEN_B_ADDRESS,
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    enabled: Boolean(address)
+  })
+
+  const { data: balanceDRT } = useReadContract({
+    address: process.env.NEXT_PUBLIC_REWARD_TOKEN_ADDRESS,
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    enabled: Boolean(address)
+  })
+
+  // Read LP Token balance (Swap contract is also LP token)
+  const { data: lpBalance } = useReadContract({
+    address: swapAddress,
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    enabled: Boolean(address && swapAddress)
+  })
+
+  // Read Farm Pool 0 user info
+  const { data: farmPool0 } = useReadContract({
+    address: farmAddress,
+    abi: FARM_ABI,
+    functionName: 'userInfo',
+    args: address ? [0n, address] : undefined,
+    enabled: Boolean(address && farmAddress)
+  })
+
+  // Read Farm Pool 1 user info
+  const { data: farmPool1 } = useReadContract({
+    address: farmAddress,
+    abi: FARM_ABI,
+    functionName: 'userInfo',
+    args: address ? [1n, address] : undefined,
+    enabled: Boolean(address && farmAddress)
+  })
+
+  // Read Farm Pool 2 user info
+  const { data: farmPool2 } = useReadContract({
+    address: farmAddress,
+    abi: FARM_ABI,
+    functionName: 'userInfo',
+    args: address ? [2n, address] : undefined,
+    enabled: Boolean(address && farmAddress)
+  })
+
+  // Read pending rewards for Pool 0
+  const { data: pendingPool0 } = useReadContract({
+    address: farmAddress,
+    abi: FARM_ABI,
+    functionName: 'pendingReward',
+    args: address ? [0n, address] : undefined,
+    enabled: Boolean(address && farmAddress)
+  })
+
+  // Read pending rewards for Pool 1
+  const { data: pendingPool1 } = useReadContract({
+    address: farmAddress,
+    abi: FARM_ABI,
+    functionName: 'pendingReward',
+    args: address ? [1n, address] : undefined,
+    enabled: Boolean(address && farmAddress)
+  })
+
+  // Read pending rewards for Pool 2
+  const { data: pendingPool2 } = useReadContract({
+    address: farmAddress,
+    abi: FARM_ABI,
+    functionName: 'pendingReward',
+    args: address ? [2n, address] : undefined,
+    enabled: Boolean(address && farmAddress)
+  })
+
+  // Calculate total LP holdings
+  const totalLPHoldings = lpBalance ? formatUnits(lpBalance, 18, 6) : '0'
+
+  // Calculate total staked in farms
+  const totalStaked = [farmPool0, farmPool1, farmPool2].reduce((sum, pool) => {
+    if (!pool) return sum
+    return sum + Number(formatUnits(pool[0], 18, 6))
+  }, 0)
+
+  // Calculate total pending rewards
+  const totalPendingRewards = [pendingPool0, pendingPool1, pendingPool2].reduce((sum, pending) => {
+    if (!pending) return sum
+    return sum + Number(formatUnits(pending, 18, 6))
+  }, 0)
+
+  // Fetch price data from API
+  useEffect(() => {
+    fetch('/api/token/price')
+      .then(res => res.json())
+      .then(data => setPriceData(data))
+      .catch(console.error)
+
+    fetch('/api/stake/pools')
+      .then(res => res.json())
+      .then(data => setPoolsData(data))
+      .catch(console.error)
+
+    fetch('/api/farm/stats')
+      .then(res => res.json())
+      .then(data => setFarmData(data))
+      .catch(console.error)
+  }, [])
+
+  // 准备价格图表数据（支持 7天/30天切换）
+  const priceChartData = priceData?.series
+    ? filterDataByDays(
+      transformDataForEcharts(priceData.series, 'ts', 'price'),
+      priceDays
+    )
+    : []
+
+  // 准备 TVL 图表数据（合成各池 TVL 历史）
+  const tvlChartData = poolsData?.pools
+    ? [{
+      name: 'Total TVL',
+      data: transformDataForEcharts(
+        poolsData.pools[0]?.history || [], // 使用第一个池的历史数据作为示例
+        'ts',
+        'tvl'
+      )
+    }]
+    : []
+
+  // 准备 APY 图表数据（支持 7天/30天切换）
+  const apyChartSeries = farmData?.apyHistory
+    ? [
+      {
+        name: 'Pool 0',
+        data: filterDataByDays(
+          farmData.apyHistory
+            .filter(item => item.poolId === 0)
+            .map(item => [item.ts, item.apy]),
+          apyDays
+        )
+      },
+      {
+        name: 'Pool 1',
+        data: filterDataByDays(
+          farmData.apyHistory
+            .filter(item => item.poolId === 1)
+            .map(item => [item.ts, item.apy]),
+          apyDays
+        )
+      },
+      {
+        name: 'Pool 2',
+        data: filterDataByDays(
+          farmData.apyHistory
+            .filter(item => item.poolId === 2)
+            .map(item => [item.ts, item.apy]),
+          apyDays
+        )
+      }
+    ]
+    : []
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900 py-12 px-4">
-      <div className="max-w-7xl mx-auto">
+    <div className="container py-8">
+      <h1 className="text-3xl font-bold mb-8">Dashboard</h1>
 
-        {/* 页面标题 */}
-        <h1 className="text-4xl font-bold text-white mb-8">
-          Dashboard
-        </h1>
-
-        {/* 总览卡片 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
-            <div className="text-white/70 text-sm mb-2">Total Balance</div>
-            <div className="text-3xl font-bold text-white mb-1">${userData.totalBalance}</div>
-            <div className="text-white/50 text-xs">Wallet Balance</div>
+      {/* Wallet Balances */}
+      {isConnected && (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="text-sm text-gray-600 mb-1">Token A Balance</div>
+              <div className="text-2xl font-bold">
+                {balanceTKA ? formatUnits(balanceTKA, 18, 4) : '0'} TKA
+              </div>
+            </div>
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="text-sm text-gray-600 mb-1">Token B Balance</div>
+              <div className="text-2xl font-bold">
+                {balanceTKB ? formatUnits(balanceTKB, 18, 4) : '0'} TKB
+              </div>
+            </div>
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="text-sm text-gray-600 mb-1">Reward Token Balance</div>
+              <div className="text-2xl font-bold">
+                {balanceDRT ? formatUnits(balanceDRT, 18, 4) : '0'} DRT
+              </div>
+            </div>
           </div>
 
-          <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
-            <div className="text-white/70 text-sm mb-2">Portfolio Value</div>
-            <div className="text-3xl font-bold text-white mb-1">${userData.totalValue}</div>
-            <div className="text-green-400 text-xs font-semibold">{userData.profitLoss}</div>
+          {/* LP Holdings & Farm Earnings */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+            <div className="bg-gradient-to-br from-cyan-500 to-cyan-600 rounded-lg shadow-lg p-6 text-white">
+              <div className="text-sm opacity-90 mb-1">💎 LP 持仓</div>
+              <div className="text-2xl font-bold">
+                {totalLPHoldings} LP
+              </div>
+              <div className="text-xs mt-2 opacity-80">
+                钱包中的 LP Token
+              </div>
+            </div>
+            <div className="bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-lg shadow-lg p-6 text-white">
+              <div className="text-sm opacity-90 mb-1">🌾 Farm 质押</div>
+              <div className="text-2xl font-bold">
+                {totalStaked.toFixed(6)} LP
+              </div>
+              <div className="text-xs mt-2 opacity-80">
+                已质押到 Farm 的 LP
+              </div>
+            </div>
+            <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-lg shadow-lg p-6 text-white">
+              <div className="text-sm opacity-90 mb-1">💰 待领取收益</div>
+              <div className="text-2xl font-bold">
+                {totalPendingRewards.toFixed(6)} DRT
+              </div>
+              <div className="text-xs mt-2 opacity-80">
+                所有 Farm 池的总收益
+              </div>
+            </div>
           </div>
+        </>
+      )}
 
-          <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
-            <div className="text-white/70 text-sm mb-2">Total Profit/Loss</div>
-            <div className="text-3xl font-bold text-green-400 mb-1">{userData.profitLossValue}</div>
-            <div className="text-white/50 text-xs">All time</div>
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
-            <div className="text-white/70 text-sm mb-2">Staking Rewards</div>
-            <div className="text-3xl font-bold text-purple-400 mb-1">20.8</div>
-            <div className="text-white/50 text-xs">REWARD tokens</div>
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg shadow-lg p-6 text-white">
+          <div className="text-sm opacity-90 mb-1">Token Price</div>
+          <div className="text-3xl font-bold">${priceData?.price?.toFixed(4) || '0'}</div>
+          <div className={`text-sm mt-2 ${priceData?.change24h >= 0 ? 'text-green-200' : 'text-red-200'}`}>
+            {priceData?.change24h >= 0 ? '+' : ''}{priceData?.change24h?.toFixed(2)}% (24h)
           </div>
         </div>
 
-        {/* 主要内容区域 */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-          {/* 左侧：资产列表 + 流动性 */}
-          <div className="lg:col-span-2 space-y-8">
-
-            {/* 我的资产 */}
-            <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
-              <h2 className="text-2xl font-bold text-white mb-6">My Assets</h2>
-              <div className="space-y-3">
-                {assets.map((asset, index) => (
-                  <div
-                    key={index}
-                    className="bg-white/5 rounded-lg p-4 hover:bg-white/10 transition-all cursor-pointer"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center">
-                        <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full mr-3 flex items-center justify-center text-white font-bold">
-                          {asset.symbol[0]}
-                        </div>
-                        <div>
-                          <div className="text-white font-semibold">{asset.symbol}</div>
-                          <div className="text-white/50 text-sm">{asset.name}</div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-white font-semibold">{asset.value}</div>
-                        <div className="text-white/70 text-sm">{asset.balance} {asset.symbol}</div>
-                      </div>
-                      <div className={`text-sm font-semibold ${asset.changePositive ? 'text-green-400' : 'text-red-400'}`}>
-                        {asset.change}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 流动性仓位 */}
-            <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
-              <h2 className="text-2xl font-bold text-white mb-6">Liquidity Positions</h2>
-              <div className="space-y-3">
-                {liquidityPositions.map((position, index) => (
-                  <div
-                    key={index}
-                    className="bg-white/5 rounded-lg p-4 hover:bg-white/10 transition-all cursor-pointer"
-                  >
-                    <div className="flex justify-between items-center mb-2">
-                      <div className="text-white font-semibold text-lg">{position.pair}</div>
-                      <div className="text-white font-semibold">{position.value}</div>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-white/70">Pool Share: {position.share}</span>
-                      <span className="text-green-400 font-semibold">Earned: {position.earned}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 质押仓位 */}
-            <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
-              <h2 className="text-2xl font-bold text-white mb-6">Staking Positions</h2>
-              <div className="space-y-3">
-                {stakingPositions.map((position, index) => (
-                  <div
-                    key={index}
-                    className="bg-white/5 rounded-lg p-4 hover:bg-white/10 transition-all"
-                  >
-                    <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <div className="text-white font-semibold text-lg">{position.pool}</div>
-                        <div className="text-white/50 text-sm">{position.staked}</div>
-                      </div>
-                      <div className="bg-green-500/20 text-green-400 px-3 py-1 rounded-full text-sm font-semibold">
-                        {position.apr} APR
-                      </div>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-white/70">Value: {position.value}</span>
-                      <span className="text-green-400 font-semibold">Earned: {position.earned}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+        <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg shadow-lg p-6 text-white">
+          <div className="text-sm opacity-90 mb-1">Total TVL</div>
+          <div className="text-3xl font-bold">
+            {poolsData ? formatUSD(poolsData.pools.reduce((sum, pool) => sum + parseFloat(pool.tvl), 0)) : '$0'}
           </div>
+        </div>
 
-          {/* 右侧：交易历史 */}
-          <div className="lg:col-span-1">
-            <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20 sticky top-4">
-              <h2 className="text-2xl font-bold text-white mb-6">Recent Transactions</h2>
-              <div className="space-y-4">
-                {transactions.map((tx, index) => (
-                  <div
-                    key={index}
-                    className="bg-white/5 rounded-lg p-4 hover:bg-white/10 transition-all cursor-pointer"
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex-1">
-                        <div className="text-white font-semibold text-sm mb-1">{tx.type}</div>
-                        <div className="text-white/70 text-xs">{tx.description}</div>
-                      </div>
-                      <div className="w-2 h-2 bg-green-400 rounded-full ml-2 mt-1"></div>
-                    </div>
-                    <div className="text-white/50 text-xs">{tx.time}</div>
-                  </div>
-                ))}
-              </div>
+        <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-lg shadow-lg p-6 text-white">
+          <div className="text-sm opacity-90 mb-1">Farm TVL</div>
+          <div className="text-3xl font-bold">
+            {farmData ? formatUSD(farmData.totalValueLocked) : '$0'}
+          </div>
+        </div>
 
-              <button className="w-full mt-6 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white font-semibold py-3 rounded-lg transition-all">
-                View All Transactions
+        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg shadow-lg p-6 text-white">
+          <div className="text-sm opacity-90 mb-1">Active Users</div>
+          <div className="text-3xl font-bold">
+            {farmData ? formatNumber(farmData.activeUsers) : '0'}
+          </div>
+        </div>
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        {/* Price Chart */}
+        <div className="bg-white rounded-lg shadow-lg p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold">Token Price</h3>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPriceDays(7)}
+                className={`px-3 py-1 text-sm rounded-lg transition-colors ${priceDays === 7
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+              >
+                7天
+              </button>
+              <button
+                onClick={() => setPriceDays(30)}
+                className={`px-3 py-1 text-sm rounded-lg transition-colors ${priceDays === 30
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+              >
+                30天
               </button>
             </div>
           </div>
+
+          {priceChartData.length > 0 ? (
+            <LineChartEcharts
+              series={[{ name: 'Price', data: priceChartData }]}
+              height={350}
+              yAxisFormatter="${value}"
+              areaStyle={true}
+              smooth={true}
+            />
+          ) : (
+            <div className="h-[350px] flex items-center justify-center text-gray-400">
+              Loading price data...
+            </div>
+          )}
+        </div>
+
+        {/* TVL Chart */}
+        <div className="bg-white rounded-lg shadow-lg p-6">
+          <h3 className="text-lg font-semibold mb-4">Total Value Locked</h3>
+
+          {tvlChartData.length > 0 && tvlChartData[0].data.length > 0 ? (
+            <LineChartEcharts
+              series={tvlChartData}
+              height={350}
+              yAxisFormatter="${value}"
+              areaStyle={true}
+              smooth={true}
+            />
+          ) : (
+            <div className="h-[350px] flex items-center justify-center text-gray-400">
+              Loading TVL data...
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* APY Chart - Full Width */}
+      <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold">Farm APY History</h3>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setApyDays(7)}
+              className={`px-3 py-1 text-sm rounded-lg transition-colors ${apyDays === 7
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+            >
+              7天
+            </button>
+            <button
+              onClick={() => setApyDays(30)}
+              className={`px-3 py-1 text-sm rounded-lg transition-colors ${apyDays === 30
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+            >
+              30天
+            </button>
+          </div>
+        </div>
+
+        {apyChartSeries.length > 0 && apyChartSeries[0].data.length > 0 ? (
+          <LineChartEcharts
+            series={apyChartSeries}
+            height={400}
+            yAxisFormatter="{value}%"
+            areaStyle={false}
+            smooth={true}
+          />
+        ) : (
+          <div className="h-[400px] flex items-center justify-center text-gray-400">
+            Loading APY data...
+          </div>
+        )}
+      </div>
+
+      {/* Staking Pools */}
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        <h2 className="text-xl font-bold mb-4">Staking Pools</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b">
+                <th className="text-left py-3 px-4">Pool</th>
+                <th className="text-right py-3 px-4">TVL</th>
+                <th className="text-right py-3 px-4">APR</th>
+                <th className="text-right py-3 px-4">Total Staked</th>
+              </tr>
+            </thead>
+            <tbody>
+              {poolsData?.pools?.map((pool) => (
+                <tr key={pool.id} className="border-b hover:bg-gray-50">
+                  <td className="py-3 px-4">
+                    <div className="font-semibold">{pool.name}</div>
+                    <div className="text-sm text-gray-600">{pool.stakingToken} → {pool.rewardToken}</div>
+                  </td>
+                  <td className="text-right py-3 px-4 font-semibold">{formatUSD(pool.tvl)}</td>
+                  <td className="text-right py-3 px-4">
+                    <span className="text-green-600 font-semibold">{pool.apr.toFixed(2)}%</span>
+                  </td>
+                  <td className="text-right py-3 px-4">{formatNumber(parseFloat(pool.totalStaked))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

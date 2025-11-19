@@ -8,5 +8,5 @@ export const config = getDefaultConfig({
     appName: 'Web3 DAPP Demo',
     projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || '',
     chains: [sepolia, mainnet, polygon],  // 测试链
-    ssr: true, // 如果是服务端渲染项目
+    ssr: false, // 如果是服务端渲染项目
 })
